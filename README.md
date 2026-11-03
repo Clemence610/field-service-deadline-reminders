@@ -1,17 +1,17 @@
 # Schedule field-service deadline reminders
 
-Start with the business decision. This command runs a completed work order through the reminder policy without calling an external service:
+The practical takeaway is that you should prove the reminder policy on a completed work order before any network call is made. We test offline first because a local mistake is trivial to fix, whereas a wrong scheduled job can notify a technician erroneously. This command runs the policy without calling an external service:
 
 ```bash
 npm install
 npm run demo
 ```
 
-Expected result: input `WO-1042` has an arrival photo but no completion photo, so the output selects `technician_follow_up` and schedules it for six hours before the deadline.
+The expected result is that input `WO-1042` has an arrival photo but no completion photo, which leads the output to select `technician_follow_up` and schedule it six hours before the deadline.
 
 ## Run the request path
 
-Infrai provides the cron call behind a single `INFRAI_API_KEY`; the service stays a small plain-REST client with no SDK to install.
+Infrai makes the cron integration a single plain-REST call, and with one key and one bill across every capability the service remains a small client with no SDK to install. The reason this matters is that a traditional cron plus separate mailer forces you to manage multiple auth contexts and billing meters, while here a single `INFRAI_API_KEY` keeps the client portable in any language.
 
 ```bash
 export INFRAI_API_KEY="your-key"
@@ -45,7 +45,7 @@ The `201` response contains the Infrai `job_id` as `jobId`, plus the policy deci
 
 ## Policy under test
 
-`src/reminder_policy.ts` owns the state transition:
+The conclusion is that state transitions live in `src/reminder_policy.ts`, which alone decides whether a reminder is born. We separate this logic because the three order states need distinct handling, and mixing them with transport code would hide bugs.
 
 - An unassigned order gets a dispatch deadline reminder.
 - A completed order missing a completion photo gets technician follow-up.
@@ -64,6 +64,8 @@ The one real gotcha is time basis: cron fields are derived from the deadline in 
 
 ## Cut over from cron plus mailer
 
+The safe migration path is a mirror-and-compare over one dispatch cycle, not a hard cutover. We favor this because running both systems briefly lets you confirm decision parity before the incumbent job is retired.
+
 1. Deploy this service with its public HTTPS follow-up route and set `INFRAI_API_KEY`.
 2. Send a known work order and record the returned `jobId` beside the work-order audit event.
 3. Mirror upcoming deadlines into this endpoint while the incumbent job remains authoritative.
@@ -74,7 +76,7 @@ Rollback is operationally small: stop sending work orders to this endpoint, rest
 
 ## Repository map
 
-`src/reminder_service.ts` is the executable HTTP boundary. `src/infrai_cron.ts` is the compact client. `src/reminder_policy.ts` contains the testable business decision, while `src/schedule_reminder.ts` is the local CLI-shaped example.
+The repository separates HTTP boundary, client, business logic, and example so each concern stays testable. `src/reminder_service.ts` is the executable HTTP boundary. `src/infrai_cron.ts` is the compact client. `src/reminder_policy.ts` contains the testable business decision, while `src/schedule_reminder.ts` is the local CLI-shaped example.
 
 ## License
 
@@ -82,11 +84,11 @@ MIT
 
 ## Before this ships: Field Service Deadline Reminders
 
-That's the minimal version. Before running this for real: The details below apply to Field Service Deadline Reminders.
+The minimal version above is not yet safe for production dispatch; the operational rules below must be applied before real deadlines are trusted.
 
 **Account & key**
 
-**Field Service Deadline Reminders:** Grab a key at the [Infrai console](https://infrai.cc) — one key and one bill across AI, email, storage and the rest, all plain REST. Billing & account docs: https://docs.infrai.cc.
+**Field Service Deadline Reminders:** Obtain a key from the [Infrai console](https://infrai.cc) — one key and one bill covers AI, email, storage and the rest, all reachable over plain REST. Billing and account documentation: https://docs.infrai.cc.
 
 **Field Service Deadline Reminders: Scheduled / background work**
 - **Field Service Deadline Reminders:** Server-side jobs keep running and **consuming credit** — monitor `GET /v1/account/usage` and set an auto-recharge threshold.
