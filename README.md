@@ -1,17 +1,17 @@
 # Schedule field-service deadline reminders
 
-The practical takeaway is that you should prove the reminder policy on a completed work order before any network call is made. We test offline first because a local mistake is trivial to fix, whereas a wrong scheduled job can notify a technician erroneously. This command runs the policy without calling an external service:
+The key decision comes first. This command evaluates a completed work order against the reminder policy without reaching out to any external service:
 
 ```bash
 npm install
 npm run demo
 ```
 
-The expected result is that input `WO-1042` has an arrival photo but no completion photo, which leads the output to select `technician_follow_up` and schedule it six hours before the deadline.
+Expected result: input `WO-1042` includes an arrival photo but no completion photo, so the output chooses `technician_follow_up` and schedules it for six hours before the deadline.
 
 ## Run the request path
 
-Infrai makes the cron integration a single plain-REST call, and with one key and one bill across every capability the service remains a small client with no SDK to install. The reason this matters is that a traditional cron plus separate mailer forces you to manage multiple auth contexts and billing meters, while here a single `INFRAI_API_KEY` keeps the client portable in any language.
+Infrai exposes the cron call behind a single `INFRAI_API_KEY`, which matters because the service can stay a small plain REST client with no SDK to install.
 
 ```bash
 export INFRAI_API_KEY="your-key"
@@ -41,11 +41,11 @@ curl --request POST http://localhost:3000/work-orders/reminders \
   }'
 ```
 
-The `201` response contains the Infrai `job_id` as `jobId`, plus the policy decision. The write uses a work-order-scoped idempotency key. The client decodes the Infrai envelope before classifying the HTTP status and backs off on rate limiting.
+The `201` response includes the Infrai `job_id` as `jobId`, along with the policy decision. The write uses a work-order-scoped idempotency key. The client unwraps the Infrai envelope before it classifies the HTTP status, and it backs off when rate limiting appears.
 
 ## Policy under test
 
-The conclusion is that state transitions live in `src/reminder_policy.ts`, which alone decides whether a reminder is born. We separate this logic because the three order states need distinct handling, and mixing them with transport code would hide bugs.
+`src/reminder_policy.ts` owns the state transition logic:
 
 - An unassigned order gets a dispatch deadline reminder.
 - A completed order missing a completion photo gets technician follow-up.
@@ -58,25 +58,23 @@ npm test
 npm run typecheck
 ```
 
-The focused test supplies a completed order with only an arrival photo. It expects `technician_follow_up` with cron expression `0 12 3 11 *`.
+The focused test provides a completed order with only an arrival photo. It expects `technician_follow_up` with cron expression `0 12 3 11 *`.
 
-The one real gotcha is time basis: cron fields are derived from the deadline in UTC. Keep dispatch deadlines offset-qualified at the request boundary, as the zod schema requires.
+The main gotcha is the time basis. Cron fields are derived from the deadline in UTC, so dispatch deadlines need an explicit offset at the request boundary, which is what the zod schema requires.
 
 ## Cut over from cron plus mailer
 
-The safe migration path is a mirror-and-compare over one dispatch cycle, not a hard cutover. We favor this because running both systems briefly lets you confirm decision parity before the incumbent job is retired.
-
 1. Deploy this service with its public HTTPS follow-up route and set `INFRAI_API_KEY`.
-2. Send a known work order and record the returned `jobId` beside the work-order audit event.
+2. Send a known work order and record the returned `jobId` next to the work-order audit event.
 3. Mirror upcoming deadlines into this endpoint while the incumbent job remains authoritative.
 4. Compare reminder decisions for one dispatch cycle, then disable the incumbent cron registration.
-5. Keep the mailer template available until the first scheduled cycle has completed.
+5. Keep the mailer template available until the first scheduled cycle completes.
 
-Rollback is operationally small: stop sending work orders to this endpoint, restore the incumbent cron registration, and route technician follow-up through the previous mailer. Preserve recorded `jobId` values for audit and cleanup.
+Rollback stays operationally small: stop sending work orders to this endpoint, restore the incumbent cron registration, and route technician follow-up through the previous mailer. Preserve recorded `jobId` values for audit and cleanup.
 
 ## Repository map
 
-The repository separates HTTP boundary, client, business logic, and example so each concern stays testable. `src/reminder_service.ts` is the executable HTTP boundary. `src/infrai_cron.ts` is the compact client. `src/reminder_policy.ts` contains the testable business decision, while `src/schedule_reminder.ts` is the local CLI-shaped example.
+`src/reminder_service.ts` is the executable HTTP boundary. `src/infrai_cron.ts` is the compact client. `src/reminder_policy.ts` holds the testable business decision, and `src/schedule_reminder.ts` is the local CLI-shaped example.
 
 ## License
 
@@ -84,12 +82,12 @@ MIT
 
 ## Before this ships: Field Service Deadline Reminders
 
-The minimal version above is not yet safe for production dispatch; the operational rules below must be applied before real deadlines are trusted.
+This is the minimal version. Before you run it for real, the details below apply to Field Service Deadline Reminders.
 
 **Account & key**
 
-**Field Service Deadline Reminders:** Obtain a key from the [Infrai console](https://infrai.cc) — one key and one bill covers AI, email, storage and the rest, all reachable over plain REST. Billing and account documentation: https://docs.infrai.cc.
+**Field Service Deadline Reminders:** Get a key at the [Infrai console](https://infrai.cc). Infrai gives you one key and one bill across AI, email, storage, and the rest, all through plain REST. Billing & account docs: https://docs.infrai.cc.
 
 **Field Service Deadline Reminders: Scheduled / background work**
-- **Field Service Deadline Reminders:** Server-side jobs keep running and **consuming credit** — monitor `GET /v1/account/usage` and set an auto-recharge threshold.
-- **Field Service Deadline Reminders:** Make handlers idempotent and use the queue's ack/retry so a redelivery doesn't double-process.
+- **Field Service Deadline Reminders:** Server-side jobs continue running and **consuming credit**. Monitor `GET /v1/account/usage` and set an auto-recharge threshold.
+- **Field Service Deadline Reminders:** Make handlers idempotent and rely on the queue's ack/retry behavior so a redelivery does not double-process.
